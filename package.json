@@ -1,0 +1,54 @@
+{
+  "name": "dsh-client-ui-webchat",
+  "version": "0.6.1",
+  "description": "DeepSeek web chat inside the DSH desktop GUI: a native panel for chat.deepseek.com with two-way handoff between the page and an agent session. The embedded browser session is per app launch, so the page asks for a login once per start.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "dsh-client-ui",
+    "deepseek",
+    "webchat",
+    "electron"
+  ],
+  "author": "sbbbx",
+  "license": "MIT",
+  "homepage": "https://github.com/sbbbx/dsh-client-ui-webchat",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sbbbx/dsh-client-ui-webchat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sbbbx/dsh-client-ui-webchat/issues"
+  },
+  "icon": "icon.svg",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "engines": {
+      "dsh": "^0.2.1-rc.2"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": "^0.2.1-rc.2",
+    "react": "^18.2.0"
+  }
+}

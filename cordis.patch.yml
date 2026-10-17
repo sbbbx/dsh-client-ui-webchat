@@ -1,0 +1,6 @@
+# Bundle patch for the DeepSeek web-chat panel.
+# The single row mounts both halves: the host half is a no-op (the plugin is
+# pure browser UI), the client half registers the sidebar entry and the panel.
+- insert:
+    - id: webchat
+      name: dsh-client-ui-webchat
