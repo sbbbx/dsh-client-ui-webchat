@@ -12,10 +12,10 @@
 ## 安装
 
 ```
-dsh plugin install dsh-client-ui-webchat
+dsh plugin add dsh-client-ui-webchat
 ```
 
-包已发布到 npm：[dsh-client-ui-webchat](https://www.npmjs.com/package/dsh-client-ui-webchat)。也可以从源码装——在 GUI 的插件管理器里 `install_bundle` 指向本仓库目录。装完左侧多一个「网页版」入口。
+装 GitHub 上的源码同一条命令：`dsh plugin add https://github.com/sbbbx/dsh-client-ui-webchat`。装完左侧多一个「网页版」入口。
 
 ## 用法
 
