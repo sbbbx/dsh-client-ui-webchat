@@ -1,5 +1,8 @@
 # dsh-client-ui-webchat
 
+[![npm](https://img.shields.io/npm/v/dsh-client-ui-webchat)](https://www.npmjs.com/package/dsh-client-ui-webchat)
+[![license](https://img.shields.io/npm/l/dsh-client-ui-webchat)](LICENSE)
+
 在 DSH 桌面端里开一个「网页版 DeepSeek」面板：不加一行模型代码，直接用网页端自己的会话，免费、不消耗 API 额度；两个方向都能搬——网页的回答一键带回 agent 会话，agent 的回答一键填回网页输入框。
 
 ## 为什么是内嵌浏览器
@@ -12,7 +15,7 @@
 dsh plugin install dsh-client-ui-webchat
 ```
 
-或在 GUI 的插件管理器里 `install_bundle` 指向本目录。装完左侧多一个「网页版」入口。
+包已发布到 npm：[dsh-client-ui-webchat](https://www.npmjs.com/package/dsh-client-ui-webchat)。也可以从源码装——在 GUI 的插件管理器里 `install_bundle` 指向本仓库目录。装完左侧多一个「网页版」入口。
 
 ## 用法
 
