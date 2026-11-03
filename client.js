@@ -14,6 +14,8 @@ window.__ModuleLoader__.load({
 
     const PANEL_ID = 'webchat';
     const PANEL_ORDER = 30;
+    /** Kept in step with package.json by the release checklist. */
+    const VERSION = '0.8.5';
     /** Sentinel option in the session picker that asks for a brand-new Session. */
     const NEW_SESSION = '\u0000new';
     const WEB_URL = 'https://chat.deepseek.com';
@@ -54,7 +56,39 @@ window.__ModuleLoader__.load({
     // Capture: runs inside chat.deepseek.com, so it may use DOM APIs freely.
     // ---------------------------------------------------------------------
     async function guestOp(action, arg) {
-      const FENCE = '```';      const plain = (node) => (node && node.innerText ? node.innerText : '').trim();
+      const FENCE = '```';
+      const plain = (node) => (node && node.innerText ? node.innerText : '').trim();
+
+      // Every DOM assumption this plugin makes lives here, ordered most exact
+      // first. Upstream renames a class and only this table changes; `probe`
+      // reports which link in each chain actually hit, so a breakage names its
+      // cause instead of failing silently.
+      const SEL = {
+        answer: ['.ds-assistant-message-main-content', '.ds-markdown--block'],
+        // Thinking/reasoning containers. Deliberately NOT `[class*="collapsible"]`:
+        // the site has two such wrappers per conversation that are not thinking
+        // areas, so that fallback turns real answers into "process text".
+        process: ['.ds-think-content', '[class*="think"]'],
+        markdown: ['.ds-markdown', '.ds-markdown--block', '[class*="markdown"]'],
+        chat: ['a[href*="/a/chat/"]', 'a[href*="/chat/s/"]'],
+      };
+      const hits = {};
+      const all = (key) => {
+        for (const selector of SEL[key]) {
+          let found = [];
+          try {
+            found = Array.prototype.slice.call(document.querySelectorAll(selector));
+          } catch {
+            found = [];
+          }
+          if (found.length > 0) {
+            hits[key] = selector;
+            return found;
+          }
+        }
+        hits[key] = null;
+        return [];
+      };
 
       const markdown = (root) => {
         const out = [];
@@ -134,21 +168,17 @@ window.__ModuleLoader__.load({
       // `.ds-assistant-message-main-content`, and anything inside a thinking or
       // collapsible area is process text, not a reply.
       const inProcess = (node) => {
-        try {
-          return Boolean(node.closest && node.closest('.ds-think-content, [class*="think"], [class*="collapsible"]'));
-        } catch {
-          return false;
+        for (const selector of SEL.process) {
+          try {
+            if (node.closest && node.closest(selector)) return true;
+          } catch {}
         }
+        return false;
       };
 
       const blocks = () => {
-        const main = Array.prototype.slice.call(document.querySelectorAll('.ds-assistant-message-main-content'));
-        const raw =
-          main.length > 0
-            ? main
-            : Array.prototype.slice
-                .call(document.querySelectorAll('.ds-markdown, .ds-markdown--block, [class*="markdown"]'))
-                .filter((node) => !inProcess(node));
+        const main = all('answer');
+        const raw = main.length > 0 ? main : all('markdown').filter((node) => !inProcess(node));
         return raw
           .filter((node) => plain(node).length > 0)
           // Nested matches (a markdown wrapper inside a markdown body) would split
@@ -175,10 +205,35 @@ window.__ModuleLoader__.load({
         return rounds;
       };
 
+      if (action === 'probe') {
+        // Per-selector counts, not just the winner: on an empty page every
+        // answer chain reports 0 and "null" would read like a breakage.
+        const counts = {};
+        for (const key of Object.keys(SEL)) {
+          counts[key] = SEL[key]
+            .map((selector) => {
+              let found = 0;
+              try {
+                found = document.querySelectorAll(selector).length;
+              } catch {}
+              return selector + ': ' + found;
+            })
+            .join(' | ');
+        }
+        all('answer');
+        return {
+          url: location.href,
+          title: document.title,
+          composer: document.querySelectorAll('textarea').length,
+          hits: hits,
+          counts: counts,
+        };
+      }
+
       if (action === 'chats') {
         const seen = new Set();
         const chats = [];
-        const links = document.querySelectorAll('a[href*="/a/chat/"], a[href*="/chat/s/"]');
+        const links = all('chat');
         for (const link of links) {
           const href = link.href;
           if (!href || seen.has(href)) continue;
@@ -193,6 +248,60 @@ window.__ModuleLoader__.load({
           if (chats.length >= 200) break;
         }
         return { chats: chats, current: location.href };
+      }
+
+      // The site is a virtualized list: only the rounds near the viewport exist
+      // in the DOM, so a single read can never see the whole conversation. Walk
+      // the scroller top→bottom and keep every distinct answer met on the way.
+      // Text is captured here, not by index later, because scrolling back to a
+      // round is a second, unreliable navigation.
+      if (action === 'collect') {
+        const stop = typeof arg === 'number' && arg > 0 ? arg : 80;
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const scrollBox = () => {
+          let node = blocks()[0] || null;
+          while (node && node !== document.body && node !== document.documentElement) {
+            if (node.scrollHeight > node.clientHeight + 40) return node;
+            node = node.parentElement;
+          }
+          return document.scrollingElement || document.documentElement;
+        };
+        const box = scrollBox();
+        const seen = new Map();
+        box.scrollTop = 0;
+        await sleep(180);
+        let steps = 0;
+        for (; steps < stop; steps += 1) {
+          for (const node of blocks()) {
+            const text = markdown(node);
+            if (!text) continue;
+            const question = questionOf(node);
+            const key = question + '\u0000' + text.length + '\u0000' + text.slice(0, 80);
+            if (!seen.has(key)) seen.set(key, { question: question, text: text });
+          }
+          const before = box.scrollTop;
+          const step = Math.max(160, Math.round(box.clientHeight * 0.75));
+          box.scrollTop = Math.min(box.scrollHeight, before + step);
+          await sleep(130);
+          if (box.scrollTop === before && steps > 1) break;
+        }
+        const list = Array.from(seen.values());
+        // Leave the guest where the user left it: the preview replaces the page,
+        // and coming back to a conversation parked at the top is disorienting.
+        box.scrollTop = box.scrollHeight;
+        return {
+          steps: steps,
+          rounds: list.map((item, index) => {
+            const head = item.question
+              ? item.question.slice(0, 24) + (item.question.length > 24 ? '…' : '')
+              : '无提问（纯回答）';
+            return {
+              label: '#' + (index + 1) + ' · ' + head + ' · ' + item.text.length + ' 字',
+              len: item.text.length,
+              text: item.question ? '> 我（网页版）问：' + item.question + '\n\n' + item.text : item.text,
+            };
+          }),
+        };
       }
 
       const rounds = roundsOf();
@@ -254,7 +363,10 @@ window.__ModuleLoader__.load({
         area.focus();
         return { ok: true, mode: 'textarea', length: area.value.length };
       }
-      const box = document.querySelector('[contenteditable="true"]');
+      const box =
+        document.querySelector('[contenteditable="true"]') ||
+        document.querySelector('[role="textbox"][contenteditable]') ||
+        document.querySelector('[role="textbox"]');
       if (box) {
         box.focus();
         let done = false;
@@ -273,19 +385,22 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     // Resident guest managed outside React.
     // ---------------------------------------------------------------------
-    const guest = { promise: null, wrapper: null, webview: null };
+    const guest = { promise: null, wrapper: null, webview: null, phase: 'idle' };
 
     function ensureGuest() {
       if (guest.promise) return guest.promise;
       guest.promise = (async () => {
         const bridge = window.dshDesktop && window.dshDesktop.browser;
         if (!bridge || typeof bridge.acquire !== 'function') {
-          throw new Error('这个面板只能在 DSH 桌面端里使用');
+          guest.phase = 'no-bridge';
+          throw new Error('这个面板只能在 DSH 桌面端里使用（浏览器版没有内嵌浏览器桥）');
         }
         const reservation = await bridge.acquire(LEASE_KEY);
         if (!reservation || typeof reservation.lease !== 'string') {
-          throw new Error('桌面端拒绝了内嵌浏览器请求');
+          guest.phase = 'no-lease';
+          throw new Error('桌面端拒绝了内嵌浏览器请求：退出 DSH 后重开；还不行就是桌面端改了租约协议');
         }
+        guest.phase = 'lease-acquired';
 
         const wrapper = document.createElement('div');
         Object.assign(wrapper.style, {
@@ -312,6 +427,7 @@ window.__ModuleLoader__.load({
         view.addEventListener('dom-ready', () => {
           if (navigated) return;
           navigated = true;
+          guest.phase = 'navigating';
           // Same event the shell uses to bind the lease, so navigate a beat later.
           setTimeout(() => {
             try {
@@ -322,7 +438,32 @@ window.__ModuleLoader__.load({
               guest.appliedHeight = -1;
               nudgeGuest();
             }, 120);
+            // Watchdog: a guest stuck on about:blank is the difference between
+            // "still loading" and "the shell never let us navigate".
+            setTimeout(() => {
+              let url = '';
+              try {
+                url = String(view.getURL() || '');
+              } catch {}
+              if (!/^https?:/i.test(url) && guest.phase === 'navigating') guest.phase = 'no-load';
+            }, 12000);
           }, 60);
+        });
+        view.addEventListener('did-fail-load', (event) => {
+          if (!event || event.isMainFrame === false) return;
+          guest.phase = 'load-failed';
+          guest.lastError = String(event.errorDescription || event.errorCode || '');
+        });
+        // The real "we are on the site" signal; `navigating` alone is mid-flight.
+        view.addEventListener('did-finish-load', () => {
+          let url = '';
+          try {
+            url = String(view.getURL() || '');
+          } catch {}
+          if (/^https?:/i.test(url)) {
+            guest.phase = 'loaded';
+            guest.lastError = '';
+          }
         });
 
         // ponytail: a link the page opens is dropped in v0 (no second guest).
@@ -482,6 +623,9 @@ window.__ModuleLoader__.load({
       // round into a session, 'feed' = carry a DSH answer into the page.
       const [panel, setPanel] = useState(null);
       const [rounds, setRounds] = useState([]);
+      // Set by 「抓全部」: rounds carry their own text, so picking one never
+      // re-scrolls the page.
+      const [collected, setCollected] = useState(null);
       const [roundIndex, setRoundIndex] = useState(-1);
       const [answers, setAnswers] = useState([]);
       const [answerIndex, setAnswerIndex] = useState(0);
@@ -534,6 +678,15 @@ window.__ModuleLoader__.load({
             if (!alive) return;
             setStatus('ready');
             sync();
+            // A bound lease can still land on about:blank; say so instead of
+            // leaving a blank rectangle with no explanation.
+            setTimeout(() => {
+              if (!alive) return;
+              if (guest.phase === 'no-load' || guest.phase === 'load-failed') {
+                setNote('网页没加载出来：点「刷新」重试；总是这样多半是网络被拦或要重新登录');
+                setNoteTone('error');
+              }
+            }, 13000);
           })
           .catch((error) => {
             if (!alive) return;
@@ -611,11 +764,6 @@ window.__ModuleLoader__.load({
         return value && typeof value === 'object' ? value : {};
       };
 
-      const listRounds = async () => {
-        const value = await runGuest('rounds', null);
-        return Array.isArray(value.rounds) ? value.rounds : [];
-      };
-
       const capture = async (index) => {
         const value = await runGuest('capture', typeof index === 'number' ? index : -1);
         return {
@@ -640,53 +788,50 @@ window.__ModuleLoader__.load({
         );
       };
 
-      // Picking a row in the round select re-reads that round, so the textarea
-      // always mirrors the choice rather than the button that opened the panel.
+      // Picking a row in the round select re-reads that round from the collected
+      // text, so the textarea always mirrors the choice and never re-scrolls the
+      // virtual list.
       const loadRound = async (index) => {
-        setBusy('round');
         setNote('');
-        try {
-          const result = await capture(index);
-          if (result.generating) {
-            setNote('这一轮还在生成，等它停了再抓');
-            setNoteTone('error');
-            return;
-          }
-          setDraft(result.text);
-          if (!result.text) {
-            setNote('这一轮没抓到内容，可以手动粘贴');
-            setNoteTone('error');
-          }
-        } catch (error) {
-          setNote('抓取失败：' + (error && error.message ? error.message : String(error)));
+        const item = collected ? collected[index] : null;
+        setDraft(item ? item.text : '');
+        if (!item) {
+          setNote('这一轮没读到内容，可以手动粘贴');
           setNoteTone('error');
-        } finally {
-          setBusy('');
         }
       };
 
+      // 填进 DSH is the whole conversation, parked on the newest round. Collecting
+      // scrolls the guest, so it happens up front instead of behind a second
+      // button nobody would press.
       const onTakeaway = async () => {
         setBusy('take');
-        setNote('');
+        setNote('正在逐屏读取网页对话…');
+        setNoteTone('info');
+        setCollected(null);
         try {
-          const list = await listRounds();
+          const value = await runGuest('collect', 120);
+          const list = Array.isArray(value && value.rounds) ? value.rounds : [];
           const last = list.length - 1;
-          setRounds(list);
-          setRoundIndex(last);
           setPanel('take');
+          setRounds(list.map((item) => ({ label: item.label, len: item.len })));
+          setRoundIndex(last);
           if (last < 0) {
             setDraft('');
-            setNote('没找到网页里的回答：可能还没登录，或这个对话还没有回复；可以在下面手动粘贴');
+            setNote('没读到网页里的回答：可能还没登录，或这个对话还没有回复；可以在下面手动粘贴');
             setNoteTone('error');
             return;
           }
-          await loadRound(last);
+          setCollected(list);
+          setDraft(list[last].text);
+          setNote('已读取 ' + list.length + ' 轮（滚了 ' + (value.steps || 0) + ' 屏），默认最新一轮');
+          setNoteTone('ok');
         } catch (error) {
+          setPanel('take');
           setRounds([]);
           setRoundIndex(-1);
-          setPanel('take');
           setDraft('');
-          setNote('抓取失败：' + (error && error.message ? error.message : String(error)) + '，可在下面手动粘贴');
+          setNote('读取失败：' + (error && error.message ? error.message : String(error)) + '，可在下面手动粘贴');
           setNoteTone('error');
         } finally {
           setBusy('');
@@ -735,6 +880,29 @@ window.__ModuleLoader__.load({
           }, 400);
         } catch (error) {
           setNote('重载失败：' + (error && error.message ? error.message : String(error)));
+          setNoteTone('error');
+        } finally {
+          setBusy('');
+        }
+      };
+
+      // Paste-ready report for an issue: version, bridge stage, and which
+      // selector chain hit. Runs even when the panel itself failed to load.
+      const onDiagnose = async () => {
+        setBusy('diag');
+        setNote('');
+        try {
+          const report = await api.diagnose();
+          let copied = false;
+          try {
+            await navigator.clipboard.writeText(report);
+            copied = true;
+          } catch {}
+          setNote(copied ? '诊断信息已复制，粘到 issue 里即可' : '复制失败，报告已打印到控制台');
+          setNoteTone(copied ? 'info' : 'error');
+          console.log('[webchat] diagnose\n' + report);
+        } catch (error) {
+          setNote('诊断失败：' + (error && error.message ? error.message : String(error)));
           setNoteTone('error');
         } finally {
           setBusy('');
@@ -868,9 +1036,10 @@ window.__ModuleLoader__.load({
               note,
             )
           : null,
-        h('button', { type: 'button', style: { ...BTN, opacity: busy ? 0.6 : 1 }, disabled: !!busy, onClick: onFeedBack }, busy === 'feed' ? '搬运中…' : '喂回去'),
-        h('button', { type: 'button', style: { ...BTN, opacity: busy ? 0.6 : 1 }, disabled: !!busy, onClick: onTakeaway }, busy === 'take' ? '抓取中…' : '带走'),
+        h('button', { type: 'button', style: { ...BTN, opacity: busy ? 0.6 : 1 }, disabled: !!busy, onClick: onFeedBack }, busy === 'feed' ? '搬运中…' : '填回网页聊天'),
+        h('button', { type: 'button', style: { ...BTN, opacity: busy ? 0.6 : 1 }, disabled: !!busy, onClick: onTakeaway }, busy === 'take' ? '抓取中…' : '填进 DSH'),
         h('button', { type: 'button', style: { ...BTN, opacity: busy ? 0.6 : 1 }, disabled: !!busy, onClick: onQuickCopy }, '复制'),
+        h('button', { type: 'button', style: BTN, onClick: onDiagnose }, '诊断'),
         h('button', { type: 'button', style: BTN, onClick: onReload }, '刷新'),
       );
 
@@ -934,7 +1103,7 @@ window.__ModuleLoader__.load({
                   background: 'var(--dsw-alias-bg-layer-1, #fff)',
                 },
               },
-              h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8 } }, h('span', { style: { fontSize: 13, fontWeight: 600 } }, '带走网页里的一轮对话'), h('span', { style: CAPTION }, '先选哪一轮，再选发到哪个会话')),
+              h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8 } }, h('span', { style: { fontSize: 13, fontWeight: 600 } }, '把网页里的一轮对话填进 DSH'), h('span', { style: CAPTION }, '先选哪一轮，再选发到哪个会话')),
               h(
                 'div',
                 { style: { display: 'flex', alignItems: 'center', gap: 12, flex: 'none', flexWrap: 'wrap' } },
@@ -1275,6 +1444,31 @@ window.__ModuleLoader__.load({
         } catch {}
       };
 
+      // One-call report for bug reports: which chain links hit, or which stage
+      // of the bridge failed. Copied to the clipboard by the 诊断 button.
+      const diagnose = async () => {
+        const lines = ['dsh-client-ui-webchat ' + VERSION];
+        lines.push('platform: ' + (window.dshDesktop ? 'desktop' : 'web'));
+        lines.push('bridge: ' + (window.dshDesktop && window.dshDesktop.browser ? 'ok' : 'missing'));
+        lines.push('phase: ' + (guest.phase || 'idle') + (guest.lastError ? ' (' + guest.lastError + ')' : ''));
+        try {
+          const resident = await ensureGuest();
+          let url = '';
+          try {
+            url = String(resident.webview.getURL() || '');
+          } catch {}
+          lines.push('guest-url: ' + (url || '(blank)'));
+          const value = await resident.webview.executeJavaScript(
+            '(' + guestOp.toString() + ')("probe", null)',
+            true,
+          );
+          lines.push('probe: ' + JSON.stringify(value));
+        } catch (error) {
+          lines.push('guest-error: ' + (error && error.message ? error.message : String(error)));
+        }
+        return lines.join('\n');
+      };
+
       const slots = ctx.slots || ctx.get('slots');
       if (!slots || typeof slots.inject !== 'function') {
         console.warn('[webchat] slots service is unavailable; panel not registered');
@@ -1289,7 +1483,7 @@ window.__ModuleLoader__.load({
       );
       disposers.push(
         slots.inject('main', () =>
-          slots.register({ name: 'main', key: PANEL_ID, inject: () => ({ api: { send, targets: listTargets, create: createIn, answers } }) }, WebChatPanel),
+          slots.register({ name: 'main', key: PANEL_ID, inject: () => ({ api: { send, targets: listTargets, create: createIn, answers, diagnose } }) }, WebChatPanel),
         ),
       );
 

@@ -39,4 +39,11 @@ if (!captured.id) throw new Error('missing module id');
 if (registered.length !== 2) throw new Error('expected 2 slot registrations, got ' + registered.length);
 if (registered[0][0] !== 'sidebar.panellist' || registered[0][1] !== 'webchat') throw new Error('bad sidebar entry');
 if (registered[1][0] !== 'main' || registered[1][1] !== 'webchat') throw new Error('bad main panel');
+
+// The 诊断 report prints VERSION from this file, so a stale const makes every
+// bug report lie about which build is running.
+const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+const declared = /const VERSION = '([^']+)'/.exec(src)[1];
+if (declared !== pkg.version) throw new Error('VERSION ' + declared + ' != package.json ' + pkg.version);
+
 console.log('SMOKE OK');
