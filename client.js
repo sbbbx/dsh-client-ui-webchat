@@ -15,7 +15,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'webchat';
     const PANEL_ORDER = 30;
     /** Kept in step with package.json by the release checklist. */
-    const VERSION = '0.8.5';
+    const VERSION = '0.8.6';
     /** Sentinel option in the session picker that asks for a brand-new Session. */
     const NEW_SESSION = '\u0000new';
     const WEB_URL = 'https://chat.deepseek.com';

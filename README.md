@@ -36,9 +36,9 @@ dsh plugin add dsh-client-ui-webchat
 
 | 项 | 值 |
 | --- | --- |
-| 实测 DSH | `0.2.1-rc.2`（桌面端 shell 同为 `0.2.1-rc.2`） |
-| `dsh.engines.dsh` | `^0.2.1-rc.2` |
-| `peerDependencies` | `@deepseek-ai/dsh@^0.2.1-rc.2`、`react@^18.2.0` |
+| 实测 DSH | `0.2.1-rc.5`（桌面端 shell 同为 `0.2.1-rc.5`） |
+| `dsh.engines.dsh` | `>=0.2.1-rc.5` |
+| `peerDependencies` | `@deepseek-ai/dsh@>=0.2.1-rc.5`、`react@^18.2.0` |
 
 版本要求写在 `package.json` 的 `dsh.engines.dsh` 里，DSH 安装时会比对；不在范围内会直接拒绝安装，而不是装上去再崩。`0.x` 阶段按这个规则走：**动了私有接口就抬 minor（0.6 → 0.7），只改文案/修小 bug 抬 patch**——因为这个插件的每一次“功能”都直接踩在 DSH 的内部实现上，用 patch 号宣布接口没变过是在骗人。
 
